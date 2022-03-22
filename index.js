@@ -1,5 +1,6 @@
-const { chromium } = require("playwright");
-const fs = require("fs");
+import { chromium } from "playwright";
+import fs from "fs";
+import fetch from "node-fetch";
 
 //download all recipes
 let getNameAndPathSuggestion = (year, month, week, lang = "NE") => {
@@ -23,9 +24,19 @@ let getNameAndPathSuggestion = (year, month, week, lang = "NE") => {
   return { name, path };
 };
 
-async function parseAndStorePDF({ name, year }, reponse) {
-  let body = await response.body();
-  fs.writeFileSync(`./pdfs/${year}/${name}`, body);
+async function parseAndStorePDF({ name, month, year }, path, page) {
+  page.pause();
+  fs.mkdir(`./pdfs/${year}/${month}`, { recursive: true }, (err) => {
+    if (err) throw err;
+  });
+  const res = await fetch(path);
+  const fileStream = fs.createWriteStream(`pdfs/${year}/${month}/${name}`);
+  await new Promise((resolve, reject) => {
+    res.body.pipe(fileStream);
+    res.body.on("error", reject);
+    fileStream.on("finish", resolve);
+  });
+  // fs.writeFileSync(`pdfs/${year}/${name}`, body);
 }
 
 (async function () {
@@ -40,29 +51,23 @@ async function parseAndStorePDF({ name, year }, reponse) {
 
   let page = await context.newPage();
   page.route = ("**/*.{html,js,jpg,jpeg,png}", (route) => route.abort());
-  // await page.route('**/*', route => {
-  //   if (route.request().postData.includes('my-string'))
-  //     route.fulfill({ body: 'mocked-data' });
-  //   else
-  //     route.continue();
-  // });
 
   if (!page) {
     console.log("Connection wasn't established");
   }
 
   try {
-    // const weekMax = 4;
-    // const monthMax = 12;
-    const weekMax = 1;
-    const monthMax = 1;
+    const weekMax = 4;
+    const monthMax = 12;
 
-    const years = [/* 2020, 2021, */ 2022];
+    const years = [2020, 2021, 2022];
     let failAttempts = 0;
     for (let year of years) {
       failAttempts = 0;
       for (let month = 1; month <= monthMax; month++) {
-        if (failAttempts > 2) {
+        // we tried
+        if (failAttempts > 1) {
+          failAttempts = 0;
           break;
         }
         for (let week = 0; week < weekMax; week++) {
@@ -72,23 +77,28 @@ async function parseAndStorePDF({ name, year }, reponse) {
             week,
             "NE"
           );
-          let response = await page.goto(path);
+          let response = undefined;
+          try {
+            response = await page.goto(path);
+          } catch (error) {
+            failAttempts++;
+            continue;
+          }
+
           let typeHeader = await response.headerValue("content-type");
 
           if (typeHeader !== "application/pdf") {
             if (week === 0) {
               failAttempts++;
             }
-            // goto next month
             break;
           }
 
-          await parseAndStorePDF({ name, year }, response);
-          // download or something
+          await parseAndStorePDF({ name, year, month }, path, page);
         }
       }
     }
   } finally {
-    browser.close();
+    await browser.close();
   }
 })();
